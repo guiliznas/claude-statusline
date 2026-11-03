@@ -317,14 +317,33 @@ if [ -n "$seven_day_pct" ]; then
     rate_lines+="${white}weekly${reset}  ${seven_day_bar} ${seven_day_pct_color}${seven_day_pct_fmt}%${reset}"
     [ -n "$seven_day_reset" ] && rate_lines+=" ${dim}⟳${reset} ${white}${seven_day_reset}${reset}"
 
-    # Daily budget: remaining weekly limit spread over the days left until reset
-    # (the current day counts as a full day)
+    # Daily budget and today's cap, computed from usage at the START of the day
+    # (snapshot taken on the first run of the day; otherwise the cap would rise with usage)
     if [ -n "$seven_day_reset_epoch" ] && [ "$seven_day_reset_epoch" != "null" ]; then
-        secs_left=$(( seven_day_reset_epoch - $(date +%s) ))
+        now_ts=$(date +%s)
+        secs_left=$(( seven_day_reset_epoch - now_ts ))
         if [ "$secs_left" -gt 0 ]; then
-            days_left=$(( (secs_left + 86399) / 86400 ))
-            daily_pct=$(awk -v r="$(( 100 - seven_day_pct ))" -v d="$days_left" 'BEGIN {v = r / d; if (v < 0) v = 0; printf "%.0f", v}')
-            rate_lines+=" ${dim}(${daily_pct}%/day)${reset}"
+            today=$(date +%F)
+            day_file="/tmp/claude/statusline-day-start-$(basename "$claude_config_dir").json"
+            day_start_pct="" day_start_days=""
+            if [ -f "$day_file" ]; then
+                read -r snap_date snap_reset snap_pct snap_days < <(jq -r '"\(.date) \(.reset) \(.pct) \(.days)"' "$day_file" 2>/dev/null)
+                if [ "$snap_date" = "$today" ] && [ "$snap_reset" = "$seven_day_reset_epoch" ]; then
+                    day_start_pct=$snap_pct day_start_days=$snap_days
+                fi
+            fi
+            if [ -z "$day_start_pct" ]; then
+                day_start_pct=$seven_day_pct
+                day_start_days=$(( (secs_left + 86399) / 86400 ))
+                mkdir -p /tmp/claude
+                printf '{"date":"%s","reset":%s,"pct":%s,"days":%s}' "$today" "$seven_day_reset_epoch" "$day_start_pct" "$day_start_days" > "$day_file.tmp" && mv "$day_file.tmp" "$day_file"
+            fi
+            read -r daily_pct today_cap < <(awk -v u="$day_start_pct" -v d="$day_start_days" 'BEGIN {
+                r = 100 - u; if (r < 0) r = 0; q = r / d; c = u + q; if (c > 100) c = 100
+                printf "%.0f %.0f", q, c }')
+            cap_color="$dim"
+            [ "$seven_day_pct" -gt "$today_cap" ] && cap_color="$orange"
+            rate_lines+=" ${dim}(${daily_pct}%/day · ${reset}${cap_color}today up to ${today_cap}%${reset}${dim})${reset}"
         fi
     fi
 fi
