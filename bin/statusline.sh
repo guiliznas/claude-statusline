@@ -341,8 +341,14 @@ if [ -n "$seven_day_pct" ]; then
             read -r daily_pct today_cap < <(awk -v u="$day_start_pct" -v d="$day_start_days" 'BEGIN {
                 r = 100 - u; if (r < 0) r = 0; q = r / d; c = u + q; if (c > 100) c = 100
                 printf "%.0f %.0f", q, c }')
-            cap_color="$dim"
-            [ "$seven_day_pct" -gt "$today_cap" ] && cap_color="$orange"
+            # red: past today's cap · yellow: 10% or less of today's budget left
+            cap_state=$(awk -v u="$seven_day_pct" -v c="$today_cap" -v q="$daily_pct" 'BEGIN {
+                if (u > c) print "over"; else if (c - u <= q * 0.1) print "near"; else print "ok" }')
+            case "$cap_state" in
+                over) cap_color="$red" ;;
+                near) cap_color="$yellow" ;;
+                *)    cap_color="$dim" ;;
+            esac
             rate_lines+=" ${dim}(${daily_pct}%/day · ${reset}${cap_color}today up to ${today_cap}%${reset}${dim})${reset}"
         fi
     fi
